@@ -102,6 +102,12 @@
             color: #d8c37c;
             font-size: 24px;
             text-shadow: 2px 2px 4px #000;
+            text-align: right;
+        }
+
+        #key-info {
+            font-size: 18px;
+            margin-top: 5px;
         }
 
         #notification {
@@ -187,6 +193,20 @@
             transition: opacity 0.2s;
         }
 
+        /* Transisi Pindah Level */
+        #fade-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #ffffff;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 18; /* Di bawah UI utama tapi di atas game */
+            transition: opacity 1.5s ease-in-out;
+        }
+
         /* Jumpscare Screen */
         #jumpscare {
             position: absolute;
@@ -223,10 +243,11 @@
     <div id="game-container"></div>
     <div id="vignette"></div>
     <div id="tension-overlay"></div>
+    <div id="fade-overlay"></div>
     <div id="vhs-filter"></div>
     <div id="jumpscare"></div>
     <div id="ui-layer">
-        <div id="level-info">Level: 1</div>
+        <div id="level-info">Level: 1<div id="key-info">Kunci: <span style="color:#cc0000">Terkunci</span></div></div>
         <div id="notification">Almond Water Ditemukan!</div>
         <div id="crosshair">+</div>
         <div id="stamina-container">
@@ -259,6 +280,7 @@
             level: 1,
             isPlaying: false,
             isDead: false,
+            isTransitioning: false,
             stamina: 100,
             exhausted: false,
             mapData: [],
@@ -267,7 +289,11 @@
             walkTimer: 0,
             flashlight: true,
             items: [], // Menyimpan Almond Water
-            heartbeatTimer: 0
+            heartbeatTimer: 0,
+            hasKey: false,
+            keyObj: null,
+            exitMeshObj: null,
+            exitLightObj: null
         };
 
         let keys = { w: false, a: false, s: false, d: false, shift: false };
@@ -296,9 +322,11 @@
         const descEl = document.getElementById('description');
         const staminaBar = document.getElementById('stamina-bar');
         const levelInfo = document.getElementById('level-info');
+        const keyInfo = document.getElementById('key-info');
         const notification = document.getElementById('notification');
         const jumpscareDiv = document.getElementById('jumpscare');
         const tensionOverlay = document.getElementById('tension-overlay');
+        const fadeOverlay = document.getElementById('fade-overlay');
 
         // --- INITIALIZATION ---
         window.onload = function() {
@@ -520,6 +548,27 @@
                 }
             }
 
+            // Generate Key (Kunci)
+            state.hasKey = false;
+            if(keyInfo) keyInfo.innerHTML = 'Kunci: <span style="color:#cc0000">Terkunci</span>';
+            const keyGeo = new THREE.OctahedronGeometry(0.3);
+            const keyMat = new THREE.MeshBasicMaterial({ color: 0xffd700, wireframe: true });
+            state.keyObj = new THREE.Mesh(keyGeo, keyMat);
+            
+            let keyPlaced = false;
+            while(!keyPlaced) {
+                let rx = Math.floor(Math.random() * size);
+                let rz = Math.floor(Math.random() * size);
+                // Pastikan diletakkan di ruang kosong dan bukan di area spawn/exit
+                if(state.mapData[rx][rz] === 0 && 
+                  (rx !== rooms[0].x || rz !== rooms[0].z) &&
+                  (rx !== rooms[rooms.length-1].x || rz !== rooms[rooms.length-1].z)) {
+                    state.keyObj.position.set(rx * config.tileSize, config.wallHeight/2, rz * config.tileSize);
+                    mapGroup.add(state.keyObj);
+                    keyPlaced = true;
+                }
+            }
+
             camera.position.set(rooms[0].x * config.tileSize, config.wallHeight * 0.6, rooms[0].z * config.tileSize);
             yaw = 0; pitch = 0; roll = 0;
             updateCameraRotation();
@@ -532,9 +581,14 @@
             );
             exitMesh.position.set(exitRoom.x * config.tileSize, config.wallHeight/2, exitRoom.z * config.tileSize);
             
-            const exitLight = new THREE.PointLight(0x00ff00, 1, 10);
+            const exitLight = new THREE.PointLight(0xff0000, 1, 10); // Start locked (Merah)
             exitLight.position.set(0, 0, 0);
             exitMesh.add(exitLight);
+            exitMaterial.color.setHex(0xff0000); // Material terkunci
+
+            state.exitMeshObj = exitMesh;
+            state.exitLightObj = exitLight;
+            
             mapGroup.add(exitMesh);
 
             scene.add(mapGroup);
@@ -734,6 +788,24 @@
             osc.stop(audioCtx.currentTime + 0.5); lfo.stop(audioCtx.currentTime + 0.5);
         }
 
+        function playWinSound() {
+            if(!audioCtx || audioCtx.state !== 'running') return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(masterGain);
+            
+            // Suara mendengung yang semakin tinggi (Portal sci-fi)
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(1000, audioCtx.currentTime + 1.5);
+            
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.8, audioCtx.currentTime + 1.0);
+            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5);
+            
+            osc.start(); osc.stop(audioCtx.currentTime + 1.5);
+        }
+
         function updateAudio() {
             if(!audioCtx || !state.isPlaying) return;
 
@@ -829,7 +901,11 @@
             overlay.style.display = 'none';
             jumpscareDiv.style.display = 'none';
             tensionOverlay.style.opacity = 0;
+            fadeOverlay.style.opacity = 0;
+            camera.fov = 75; // Reset FOV jika berasal dari transisi
+            camera.updateProjectionMatrix();
             state.isDead = false;
+            state.isTransitioning = false;
             document.body.requestPointerLock();
             
             if(!state.isPlaying && state.mapData.length === 0) {
@@ -840,7 +916,7 @@
                 generateLevel();
             }
             
-            levelInfo.innerText = "Level: " + state.level;
+            levelInfo.innerHTML = `Level: ${state.level}<div id="key-info">Kunci: <span style="color:${state.hasKey ? '#00ff00' : '#cc0000'}">${state.hasKey ? 'Ditemukan' : 'Terkunci'}</span></div>`;
             state.isPlaying = true;
         }
 
@@ -886,18 +962,52 @@
         }
 
         function winLevel() {
-            state.isPlaying = false;
-            state.level++;
-            document.exitPointerLock();
-            overlay.style.display = 'flex';
-            titleEl.innerText = "LEVEL SELESAI";
-            titleEl.style.color = "#00ff00";
-            descEl.innerText = "Anda menemukan jalan keluar. Namun lorong ini tidak berujung...";
-            startBtn.innerText = "Masuk ke Level " + state.level;
-            generateLevel(); 
+            if (state.isTransitioning) return;
+            state.isTransitioning = true; // Kunci pergerakan normal player dan monster
+            
+            playWinSound();
+            fadeOverlay.style.opacity = 1; 
+            showNotification("MEMASUKI LEVEL BERIKUTNYA...");
+
+            // Waktu transisi diperpanjang sedikit agar animasi warp terasa
+            setTimeout(() => {
+                state.isPlaying = false;
+                state.level++;
+                document.exitPointerLock();
+                
+                // Reset Kamera
+                camera.fov = 75;
+                camera.updateProjectionMatrix();
+                roll = 0;
+                updateCameraRotation();
+
+                overlay.style.display = 'flex';
+                titleEl.innerText = "LEVEL SELESAI";
+                titleEl.style.color = "#00ff00";
+                descEl.innerText = "Anda menemukan jalan keluar. Namun lorong ini tidak berujung...";
+                startBtn.innerText = "Masuk ke Level " + state.level;
+                generateLevel(); 
+                state.isTransitioning = false;
+            }, 2000);
         }
 
         function updatePlayer(delta) {
+            // Efek Transisi Menang (Tersedot ke lubang/pilar)
+            if (state.isTransitioning) {
+                camera.fov += (150 - camera.fov) * 3 * delta;
+                camera.updateProjectionMatrix();
+                
+                roll += 4 * delta; // Kamera berputar
+                updateCameraRotation();
+                
+                let exitWorldX = state.exitPos.x * config.tileSize;
+                let exitWorldZ = state.exitPos.z * config.tileSize;
+                camera.position.x += (exitWorldX - camera.position.x) * 3 * delta;
+                camera.position.z += (exitWorldZ - camera.position.z) * 3 * delta;
+                
+                return; // Hentikan input normal
+            }
+
             let isMoving = keys.w || keys.a || keys.s || keys.d;
             let isSprinting = keys.shift && isMoving && !state.exhausted;
 
@@ -1002,15 +1112,35 @@
                 }
             }
 
+            // Cek Koleksi Kunci (Key)
+            if (!state.hasKey && state.keyObj) {
+                if (camera.position.distanceTo(state.keyObj.position) < 1.5) {
+                    state.hasKey = true;
+                    mapGroup.remove(state.keyObj);
+                    
+                    // Buka jalan keluar (Ubah jadi warna hijau)
+                    exitMaterial.color.setHex(0x00ff00);
+                    state.exitLightObj.color.setHex(0x00ff00);
+                    
+                    document.getElementById('key-info').innerHTML = 'Kunci: <span style="color:#00ff00">Ditemukan</span>';
+                    showNotification("KUNCI DITEMUKAN! Pilar jalan keluar telah terbuka!");
+                    playClickSound(); 
+                }
+            }
+
             let pGridX = Math.round(camera.position.x / config.tileSize);
             let pGridZ = Math.round(camera.position.z / config.tileSize);
             if (pGridX === state.exitPos.x && pGridZ === state.exitPos.z) {
-                winLevel();
+                if (state.hasKey) {
+                    winLevel();
+                } else {
+                    if(Math.random() < 0.05) showNotification("Jalan Keluar Terkunci! Cari objek Kunci (Kuning) terlebih dahulu.");
+                }
             }
         }
 
         function updateMonster() {
-            if (!state.monsterActive || !monster) return;
+            if (!state.monsterActive || !monster || state.isTransitioning) return; // Monster ikut berhenti
 
             let dir = new THREE.Vector3();
             dir.subVectors(camera.position, monster.position);
@@ -1065,6 +1195,13 @@
                 item.rotation.y += 0.02;
                 item.position.y = 0.4 + Math.sin(Date.now() * 0.005) * 0.05; 
             });
+
+            // Animasi Putaran Kunci
+            if (!state.hasKey && state.keyObj) {
+                state.keyObj.rotation.y += 0.05;
+                state.keyObj.rotation.x += 0.02;
+                state.keyObj.position.y = (config.wallHeight / 2) + Math.sin(Date.now() * 0.005) * 0.2;
+            }
         }
 
         // --- MAIN LOOP ---
