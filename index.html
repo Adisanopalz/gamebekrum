@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backrooms: Infinite Escape</title>
+    <style>
+        :root {
+            --primary-col: #d6ce9c;
+            --bg-col: #050505;
+            --alert-col: #aa0000;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-col);
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+        }
+
+        /* UI Overlays */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .menu-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(5, 5, 5, 0.85);
+            color: var(--primary-col);
+            transition: opacity 0.3s ease;
+            pointer-events: auto;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none !important;
+        }
+
+        h1 {
+            font-size: 4rem;
+            text-shadow: 2px 2px 10px rgba(0,0,0,1);
+            margin-bottom: 40px;
+            text-align: center;
+        }
+
+        button {
+            background: transparent;
+            color: var(--primary-col);
+            border: 2px solid var(--primary-col);
+            padding: 15px 50px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            margin: 10px;
+            font-family: inherit;
+            font-weight: bold;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+
+        button:hover {
+            background: var(--primary-col);
+            color: var(--bg-col);
+            box-shadow: 0 0 15px var(--primary-col);
+        }
+
+        /* HUD Elements */
+        #hud {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+        }
+
+        #stamina-container {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 250px;
+            height: 12px;
+            border: 2px solid rgba(214, 206, 156, 0.5);
+            background: rgba(0,0,0,0.5);
+        }
+
+        #stamina-bar {
+            height: 100%;
+            background: var(--primary-col);
+            width: 100%;
+            transition: width 0.1s linear, background-color 0.3s;
+        }
+
+        #stamina-label {
+            position: absolute;
+            bottom: 60px;
+            left: 40px;
+            color: var(--primary-col);
+            font-size: 1.2rem;
+            text-shadow: 1px 1px 2px black;
+        }
+
+        #monster-warning {
+            position: absolute;
+            top: 50px;
+            width: 100%;
+            text-align: center;
+            color: var(--alert-col);
+            font-size: 2.5rem;
+            font-weight: bold;
+            text-shadow: 0 0 15px var(--alert-col);
+            opacity: 0;
+            transition: opacity 0.2s;
+            animation: glitch 0.3s infinite;
+        }
+
+        #objective-notification {
+            position: absolute;
+            top: 100px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-size: 1.5rem;
+            opacity: 0;
+            text-shadow: 0 0 5px black;
+            transition: opacity 2s;
+        }
+
+        @keyframes glitch {
+            0% { transform: translate(0) }
+            20% { transform: translate(-2px, 2px) }
+            40% { transform: translate(-2px, -2px) }
+            60% { transform: translate(2px, 2px) }
+            80% { transform: translate(2px, -2px) }
+            100% { transform: translate(0) }
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        
+        .credits-text {
+            max-width: 600px;
+            text-align: center;
+            line-height: 1.6;
+            font-size: 1.2rem;
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <!-- HUD -->
+        <div id="hud" class="hidden">
+            <div id="crosshair"></div>
+            <div id="stamina-label" data-i18n="stamina">STAMINA</div>
+            <div id="stamina-container">
+                <div id="stamina-bar"></div>
+            </div>
+            <div id="monster-warning" data-i18n="monster_near">Something is nearby...</div>
+            <div id="objective-notification" data-i18n="objective">Find the red exit door.</div>
+        </div>
+
+        <!-- Main Menu -->
+        <div id="menu-main" class="menu-overlay">
+            <h1 data-i18n="title">Backrooms: Infinite Escape</h1>
+            <button id="btn-play" data-i18n="play">PLAY</button>
+            <button id="btn-settings" data-i18n="settings">SETTINGS</button>
+            <button id="btn-credits" data-i18n="credits">CREDITS</button>
+        </div>
+
+        <!-- Settings Menu -->
+        <div id="menu-settings" class="menu-overlay hidden">
+            <h1 data-i18n="settings">SETTINGS</h1>
+            <button id="btn-lang" data-i18n="lang_btn">LANGUAGE: ENGLISH</button>
+            <button id="btn-back-settings" data-i18n="exit">BACK</button>
+        </div>
+
+        <!-- Credits Menu -->
+        <div id="menu-credits" class="menu-overlay hidden">
+            <h1 data-i18n="credits">CREDITS</h1>
+            <div class="credits-text" data-i18n="credits_text">
+                A single-file procedural horror experience.<br>
+                Powered by Three.js and Web Audio API.<br>
+                Survive the entity. Find the exit.
+            </div>
+            <button id="btn-back-credits" data-i18n="exit">BACK</button>
+        </div>
+
+        <!-- Pause Menu -->
+        <div id="menu-pause" class="menu-overlay hidden">
+            <h1 data-i18n="paused">PAUSED</h1>
+            <button id="btn-resume" data-i18n="resume">RESUME</button>
+            <button id="btn-quit" data-i18n="quit">QUIT TO MENU</button>
+        </div>
+
+        <!-- Game Over -->
+        <div id="menu-gameover" class="menu-overlay hidden">
+            <h1 style="color: var(--alert-col);" data-i18n="game_over">YOU WERE LOST</h1>
+            <button id="btn-retry" data-i18n="retry">RETRY</button>
+        </div>
+
+        <!-- Win Screen -->
+        <div id="menu-win" class="menu-overlay hidden">
+            <h1 style="color: #aaddaa;" data-i18n="win">YOU ESCAPED</h1>
+            <button id="btn-win-menu" data-i18n="quit">MAIN MENU</button>
+        </div>
+    </div>
+
+    <!-- Import Three.js Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // ==========================================
+        // 1. LOCALIZATION SYSTEM
+        // ==========================================
+        const LANG = {
+            en: {
+                title: "Backrooms: Infinite Escape",
+                play: "PLAY",
+                settings: "SETTINGS",
+                credits: "CREDITS",
+                lang_btn: "LANGUAGE: ENGLISH",
+                exit: "BACK",
+                resume: "RESUME",
+                quit: "QUIT TO MENU",
+                stamina: "STAMINA",
+                monster_near: "Something is nearby...",
+                objective: "Find the red exit door.",
+                game_over: "YOU WERE LOST",
+                retry: "RETRY",
+                win: "YOU ESCAPED",
+                paused: "PAUSED",
+                credits_text: "A single-file procedural horror experience.<br>Powered by Three.js and Web Audio API.<br>Survive the entity. Find the exit."
+            },
+            id: {
+                title: "Backrooms: Pelarian Tanpa Batas",
+                play: "MAIN",
+                settings: "PENGATURAN",
+                credits: "KREDIT",
+                lang_btn: "BAHASA: INDONESIA",
+                exit: "KEMBALI",
+                resume: "LANJUTKAN",
+                quit: "KEMBALI KE MENU",
+                stamina: "STAMINA",
+                monster_near: "Ada sesuatu di dekatmu...",
+                objective: "Temukan pintu keluar berwarna merah.",
+                game_over: "KAU TERSESAT",
+                retry: "COBA LAGI",
+                win: "KAU BERHASIL KABUR",
+                paused: "JEDA",
+                credits_text: "Pengalaman horor prosedural dalam satu file.<br>Ditenagai oleh Three.js dan Web Audio API.<br>Bertahanlah dari entitas. Temukan jalan keluar."
+            }
+        };
+
+        let currentLang = 'en';
+
+        function updateLanguage() {
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (LANG[currentLang][key]) {
+                    el.innerHTML = LANG[currentLang][key];
+                }
+            });
+            document.getElementById('btn-lang').innerText = LANG[currentLang].lang_btn;
+        }
+
+        document.getElementById('btn-lang').addEventListener('click', () => {
+            currentLang = currentLang === 'en' ? 'id' : 'en';
+            updateLanguage();
+        });
+
+        // ==========================================
+        // 2. UI & STATE MANAGEMENT
+        // ==========================================
+        let gameState = 'MENU'; // MENU, PLAYING, PAUSED, GAMEOVER, WIN
+
+        const menus = {
+            main: document.getElementById('menu-main'),
+            settings: document.getElementById('menu-settings'),
+            credits: document.getElementById('menu-credits'),
+            pause: document.getElementById('menu-pause'),
+            gameover: document.getElementById('menu-gameover'),
+            win: document.getElementById('menu-win'),
+            hud: document.getElementById('hud')
+        };
+
+        function showMenu(menuName) {
+            Object.values(menus).forEach(m => m.classList.add('hidden'));
+            if(menus[menuName]) menus[menuName].classList.remove('hidden');
+        }
+
+        document.getElementById('btn-settings').onclick = () => showMenu('settings');
+        document.getElementById('btn-back-settings').onclick = () => showMenu('main');
+        document.getElementById('btn-credits').onclick = () => showMenu('credits');
+        document.getElementById('btn-back-credits').onclick = () => showMenu('main');
+        
+        document.getElementById('btn-quit').onclick = () => {
+            gameState = 'MENU';
+            document.exitPointerLock();
+            showMenu('main');
+            stopAudio();
+        };
+        document.getElementById('btn-win-menu').onclick = document.getElementById('btn-quit').onclick;
+
+        // ==========================================
+        // 3. AUDIO ENGINE (Web Audio API)
+        // ==========================================
+        let audioCtx;
+        let humOsc, humGain;
+        let staticOsc, staticGain;
+        let stepBuffer;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Create Footstep Noise Buffer
+                const bufferSize = audioCtx.sampleRate * 0.1;
+                stepBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = stepBuffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+            }
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function startAmbientAudio() {
+            if(!audioCtx) return;
+            // Background Hum
+            humOsc = audioCtx.createOscillator();
+            humOsc.type = 'sawtooth';
+            humOsc.frequency.value = 55;
+            
+            const humFilter = audioCtx.createBiquadFilter();
+            humFilter.type = 'lowpass';
+            humFilter.frequency.value = 200;
+
+            humGain = audioCtx.createGain();
+            humGain.gain.value = 0.05;
+
+            humOsc.connect(humFilter).connect(humGain).connect(audioCtx.destination);
+            humOsc.start();
+
+            // Monster Static (Silent initially)
+            staticOsc = audioCtx.createOscillator();
+            staticOsc.type = 'square';
+            staticOsc.frequency.value = 100;
+
+            staticGain = audioCtx.createGain();
+            staticGain.gain.value = 0;
+
+            staticOsc.connect(staticGain).connect(audioCtx.destination);
+            staticOsc.start();
+        }
+
+        function stopAudio() {
+            if(humOsc) { humOsc.stop(); humOsc = null; }
+            if(staticOsc) { staticOsc.stop(); staticOsc = null; }
+        }
+
+        function playFootstep() {
+            if(!audioCtx || audioCtx.state !== 'running') return;
+            const source = audioCtx.createBufferSource();
+            source.buffer = stepBuffer;
+            
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.value = 800; // Muffled carpet sound
+            
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            
+            source.connect(filter).connect(gain).connect(audioCtx.destination);
+            source.start();
+        }
+
+        function updateMonsterAudio(distance) {
+            if(!staticGain || !humGain) return;
+            if (distance < 30) {
+                // Closer = louder static, distorted frequency
+                const intensity = 1 - (distance / 30);
+                staticGain.gain.setTargetAtTime(intensity * 0.15, audioCtx.currentTime, 0.1);
+                staticOsc.frequency.setTargetAtTime(100 + Math.random() * 500 * intensity, audioCtx.currentTime, 0.1);
+                humGain.gain.setTargetAtTime(0.05 + (intensity * 0.1), audioCtx.currentTime, 0.1);
+            } else {
+                staticGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5);
+                humGain.gain.setTargetAtTime(0.05, audioCtx.currentTime, 0.5);
+            }
+        }
+
+        // ==========================================
+        // 4. PROCEDURAL TEXTURES (Canvas API)
+        // ==========================================
+        function createWallTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            // Base dirty yellow
+            ctx.fillStyle = '#d6ce9c';
+            ctx.fillRect(0,0,256,256);
+            
+            // Subtle wallpaper lines
+            ctx.strokeStyle = '#c4ba83';
+            ctx.lineWidth = 2;
+            for(let i=0; i<256; i+=16) {
+                ctx.beginPath();
+                ctx.moveTo(0, i); ctx.lineTo(256, i);
+                ctx.moveTo(i, 0); ctx.lineTo(i, 256);
+                ctx.stroke();
+            }
+
+            // Grime/Noise
+            for(let i=0; i<8000; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? 'rgba(0,0,0,0.03)' : 'rgba(100,100,0,0.03)';
+                ctx.fillRect(Math.random()*256, Math.random()*256, 2, 2);
+            }
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+
+        function createCarpetTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            // Base brown/tan
+            ctx.fillStyle = '#8a7e58';
+            ctx.fillRect(0,0,256,256);
+            
+            // Heavy noise for carpet fibers
+            for(let i=0; i<30000; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? '#6b6142' : '#a89a6c';
+                ctx.fillRect(Math.random()*256, Math.random()*256, 1, 1);
+            }
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+
+        function createCeilingTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = '#e8e5d1';
+            ctx.fillRect(0,0,256,256);
+            
+            // Acoustic tiles grid
+            ctx.strokeStyle = '#b8b5a3';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(0,0,256,256);
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+
+        // ==========================================
+        // 5. THREE.JS SETUP & PROCEDURAL WORLD
+        // ==========================================
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050505);
+        scene.fog = new THREE.FogExp2(0xc4ba83, 0.04); // Sickly yellow/grey fog
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        // Player / Camera Rig
+        const pitchObject = new THREE.Object3D();
+        pitchObject.add(camera);
+        const yawObject = new THREE.Object3D();
+        yawObject.add(pitchObject);
+        scene.add(yawObject);
+
+        // Map Constants
+        const mapSize = 60; // 60x60 grid
+        const cellSize = 5;
+        const wallHeight = 4;
+        let grid = [];
+        let mapMeshes = [];
+        let pointLights = [];
+
+        const texWall = createWallTexture();
+        const texFloor = createCarpetTexture();
+        const texCeil = createCeilingTexture();
+
+        // Monster Setup
+        let monsterActive = false;
+        const monsterGeo = new THREE.CylinderGeometry(0.5, 0.5, 3.5, 8);
+        monsterGeo.translate(0, 1.75, 0); // Origin at bottom
+        
+        // Glitchy black material
+        const monsterMat = new THREE.MeshBasicMaterial({ 
+            color: 0x000000, 
+            wireframe: true,
+            transparent: true,
+            opacity: 0.9
+        });
+        const monster = new THREE.Mesh(monsterGeo, monsterMat);
+        scene.add(monster);
+
+        // Exit Door Setup
+        const exitGeo = new THREE.BoxGeometry(cellSize * 0.8, wallHeight * 0.8, 0.5);
+        const exitMat = new THREE.MeshLambertMaterial({ color: 0xaa0000 });
+        const exitMesh = new THREE.Mesh(exitGeo, exitMat);
+        scene.add(exitMesh);
+
+        function generateMaze() {
+            // Clean up old meshes
+            mapMeshes.forEach(m => scene.remove(m));
+            pointLights.forEach(l => scene.remove(l.light));
+            mapMeshes = [];
+            pointLights = [];
+
+            // Initialize solid wall grid
+            grid = Array(mapSize).fill().map(() => Array(mapSize).fill(1)); // 1=wall, 0=floor
+
+            // Random Walker Algorithm to carve paths
+            let px = Math.floor(mapSize / 2);
+            let pz = Math.floor(mapSize / 2);
+            grid[px][pz] = 0;
+
+            let walkers = [{ x: px, z: pz, life: 3000 }];
+            
+            while(walkers.length > 0) {
+                let w = walkers.pop();
+                while(w.life > 0) {
+                    let dirs = [[0,1], [0,-1], [1,0], [-1,0]];
+                    let d = dirs[Math.floor(Math.random() * dirs.length)];
+                    
+                    if(w.x+d[0] > 1 && w.x+d[0] < mapSize-2 && w.z+d[1] > 1 && w.z+d[1] < mapSize-2) {
+                        w.x += d[0];
+                        w.z += d[1];
+                        grid[w.x][w.z] = 0;
+
+                        // Create open rooms occasionally
+                        if(Math.random() < 0.03) {
+                            let rs = Math.floor(Math.random() * 2) + 1;
+                            for(let rx=-rs; rx<=rs; rx++) {
+                                for(let rz=-rs; rz<=rs; rz++) {
+                                    if(w.x+rx>1 && w.x+rx<mapSize-2 && w.z+rz>1 && w.z+rz<mapSize-2) {
+                                        grid[w.x+rx][w.z+rz] = 0;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Branch out
+                        if(Math.random() < 0.05 && walkers.length < 15) {
+                            walkers.push({ x: w.x, z: w.z, life: w.life/2 });
+                        }
+                    }
+                    w.life--;
+                }
+            }
+
+            // Build Geometry (Instanced for Performance)
+            let wallCount = 0;
+            for(let x=0; x<mapSize; x++) {
+                for(let z=0; z<mapSize; z++) {
+                    if(grid[x][z] === 1) wallCount++;
+                }
+            }
+
+            const wallGeo = new THREE.BoxGeometry(cellSize, wallHeight, cellSize);
+            const wallMat = new THREE.MeshLambertMaterial({ map: texWall });
+            const instancedWalls = new THREE.InstancedMesh(wallGeo, wallMat, wallCount);
+            
+            const dummy = new THREE.Object3D();
+            let idx = 0;
+            const offset = (mapSize * cellSize) / 2;
+
+            for(let x=0; x<mapSize; x++) {
+                for(let z=0; z<mapSize; z++) {
+                    if(grid[x][z] === 1) {
+                        dummy.position.set(x * cellSize - offset, wallHeight / 2, z * cellSize - offset);
+                        dummy.updateMatrix();
+                        instancedWalls.setMatrixAt(idx++, dummy.matrix);
+                    } else {
+                        // Place lights randomly in open corridors
+                        if (Math.random() < 0.1) {
+                            const pLight = new THREE.PointLight(0xfffae3, 0.7, cellSize * 3.5);
+                            pLight.position.set(x * cellSize - offset, wallHeight - 0.5, z * cellSize - offset);
+                            scene.add(pLight);
+                            pointLights.push({ light: pLight, baseInt: 0.7, phase: Math.random() * 10 });
+                        }
+                    }
+                }
+            }
+            scene.add(instancedWalls);
+            mapMeshes.push(instancedWalls);
+
+            // Add Floor and Ceiling
+            texFloor.repeat.set(mapSize, mapSize);
+            texCeil.repeat.set(mapSize, mapSize);
+
+            const planeGeo = new THREE.PlaneGeometry(mapSize * cellSize, mapSize * cellSize);
+            
+            const floorMat = new THREE.MeshLambertMaterial({ map: texFloor });
+            const floorMesh = new THREE.Mesh(planeGeo, floorMat);
+            floorMesh.rotation.x = -Math.PI / 2;
+            scene.add(floorMesh);
+            mapMeshes.push(floorMesh);
+
+            const ceilMat = new THREE.MeshLambertMaterial({ map: texCeil });
+            const ceilMesh = new THREE.Mesh(planeGeo, ceilMat);
+            ceilMesh.rotation.x = Math.PI / 2;
+            ceilMesh.position.y = wallHeight;
+            scene.add(ceilMesh);
+            mapMeshes.push(ceilMesh);
+
+            // Place Exit Door far from center
+            let ex, ez, dist;
+            do {
+                ex = Math.floor(Math.random() * mapSize);
+                ez = Math.floor(Math.random() * mapSize);
+                dist = Math.sqrt(Math.pow(ex - mapSize/2, 2) + Math.pow(ez - mapSize/2, 2));
+            } while (grid[ex][ez] === 1 || dist < mapSize/3); // Must be a floor and far away
+            
+            exitMesh.position.set(ex * cellSize - offset, wallHeight/2, ez * cellSize - offset);
+
+            // Lighting Base
+            const ambient = new THREE.AmbientLight(0xffffff, 0.3);
+            scene.add(ambient);
+            mapMeshes.push(ambient);
+        }
+
+        // ==========================================
+        // 6. PLAYER CONTROLS & PHYSICS
+        // ==========================================
+        const playerRadius = 1.0;
+        let isSprinting = false;
+        let stamina = 100;
+        let velocityY = 0;
+        let isGrounded = true;
+        
+        const keys = { w: false, a: false, s: false, d: false };
+
+        document.addEventListener('keydown', (e) => {
+            if(gameState !== 'PLAYING') return;
+            switch(e.code) {
+                case 'KeyW': keys.w = true; break;
+                case 'KeyS': keys.s = true; break;
+                case 'KeyA': keys.a = true; break;
+                case 'KeyD': keys.d = true; break;
+                case 'ShiftLeft': isSprinting = true; break;
+                case 'Space': 
+                    if(isGrounded) {
+                        velocityY = 6;
+                        isGrounded = false;
+                    }
+                    break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            switch(e.code) {
+                case 'KeyW': keys.w = false; break;
+                case 'KeyS': keys.s = false; break;
+                case 'KeyA': keys.a = false; break;
+                case 'KeyD': keys.d = false; break;
+                case 'ShiftLeft': isSprinting = false; break;
+            }
+        });
+
+        // Pointer Lock / Mouse Look
+        document.body.requestPointerLock = document.body.requestPointerLock || document.body.mozRequestPointerLock;
+        
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === document.body && gameState === 'PLAYING') {
+                yawObject.rotation.y -= e.movementX * 0.002;
+                pitchObject.rotation.x -= e.movementY * 0.002;
+                pitchObject.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitchObject.rotation.x));
+            }
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement !== document.body) {
+                if (gameState === 'PLAYING') {
+                    gameState = 'PAUSED';
+                    stopAudio();
+                    showMenu('pause');
+                }
+            } else {
+                if (gameState === 'PAUSED') {
+                    gameState = 'PLAYING';
+                    initAudio();
+                    startAmbientAudio();
+                    showMenu('hud');
+                }
+            }
+        });
+
+        // Collision Logic
+        function isSpaceFree(x, z, radius) {
+            const offset = (mapSize * cellSize) / 2;
+            // Check bounding box corners
+            const corners = [
+                { dx: -radius, dz: -radius },
+                { dx: radius, dz: -radius },
+                { dx: -radius, dz: radius },
+                { dx: radius, dz: radius }
+            ];
+
+            for(let c of corners) {
+                let cx = Math.floor((x + c.dx + offset) / cellSize);
+                let cz = Math.floor((z + c.dz + offset) / cellSize);
+                if(cx < 0 || cx >= mapSize || cz < 0 || cz >= mapSize) return false; // Bounds
+                if(grid[cx][cz] === 1) return false; // Wall
+            }
+            return true;
+        }
+
+        // ==========================================
+        // 7. GAME LOGIC & LOOP
+        // ==========================================
+        function startGame() {
+            initAudio();
+            generateMaze();
+            
+            // Set Player Start
+            yawObject.position.set(0, wallHeight / 2, 0); // Center is 0,0 in array (mapSize/2)
+            pitchObject.rotation.x = 0;
+            yawObject.rotation.y = 0;
+            stamina = 100;
+            
+            // Hide Monster
+            monsterActive = false;
+            monster.position.set(0, -100, 0); 
+            menus.hud.querySelector('#monster-warning').style.opacity = 0;
+
+            // Notification
+            const notif = document.getElementById('objective-notification');
+            notif.style.opacity = 1;
+            setTimeout(() => { notif.style.opacity = 0; }, 4000);
+
+            document.body.requestPointerLock();
+            gameState = 'PLAYING';
+            showMenu('hud');
+            startAmbientAudio();
+        }
+
+        document.getElementById('btn-play').addEventListener('click', startGame);
+        document.getElementById('btn-retry').addEventListener('click', startGame);
+        document.getElementById('btn-resume').addEventListener('click', () => {
+            document.body.requestPointerLock();
+        });
+
+        // Main Loop Variables
+        const clock = new THREE.Clock();
+        let bobTimer = 0;
+        let lastStepTime = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1); // Cap delta to prevent huge jumps
+            const time = clock.getElapsedTime();
+
+            if (gameState !== 'PLAYING') {
+                renderer.render(scene, camera);
+                return;
+            }
+
+            // --- MOVEMENT & STAMINA ---
+            const moveVec = new THREE.Vector3();
+            if (keys.w) moveVec.z -= 1;
+            if (keys.s) moveVec.z += 1;
+            if (keys.a) moveVec.x -= 1;
+            if (keys.d) moveVec.x += 1;
+            moveVec.normalize();
+
+            let speed = 4.0;
+            const isMoving = moveVec.lengthSq() > 0;
+
+            if (isSprinting && stamina > 0 && isMoving) {
+                speed = 7.5;
+                stamina -= 15 * delta;
+            } else {
+                stamina += 10 * delta;
+            }
+            stamina = Math.max(0, Math.min(100, stamina));
+            
+            // Update UI
+            document.getElementById('stamina-bar').style.width = stamina + '%';
+            document.getElementById('stamina-bar').style.backgroundColor = stamina < 20 ? var('--alert-col') : 'var(--primary-col)';
+
+            // Apply Rotation
+            moveVec.applyEuler(new THREE.Euler(0, yawObject.rotation.y, 0));
+            moveVec.multiplyScalar(speed * delta);
+
+            // Apply Collision X and Z separately for sliding
+            if (isSpaceFree(yawObject.position.x + moveVec.x, yawObject.position.z, playerRadius)) {
+                yawObject.position.x += moveVec.x;
+            }
+            if (isSpaceFree(yawObject.position.x, yawObject.position.z + moveVec.z, playerRadius)) {
+                yawObject.position.z += moveVec.z;
+            }
+
+            // Gravity & Jump
+            if (!isGrounded) {
+                velocityY -= 15 * delta; // Gravity
+            }
+            yawObject.position.y += velocityY * delta;
+            
+            if (yawObject.position.y <= wallHeight / 2) {
+                yawObject.position.y = wallHeight / 2;
+                isGrounded = true;
+                velocityY = 0;
+            }
+
+            // Head Bobbing & Footsteps
+            if (isMoving && isGrounded) {
+                bobTimer += delta * (isSprinting ? 12 : 8);
+                pitchObject.position.y = Math.sin(bobTimer) * 0.08;
+                
+                // Trigger footstep sound at bottom of bob
+                if (Math.sin(bobTimer) < -0.8 && time - lastStepTime > 0.3) {
+                    playFootstep();
+                    lastStepTime = time;
+                }
+            } else {
+                bobTimer = 0;
+                pitchObject.position.y = THREE.MathUtils.lerp(pitchObject.position.y, 0, 10 * delta);
+            }
+
+            // --- LIGHT FLICKERING ---
+            pointLights.forEach(pl => {
+                if (Math.random() < 0.02) {
+                    pl.light.intensity = Math.random() < 0.5 ? 0 : pl.baseInt; // Sudden off/on
+                } else {
+                    pl.light.intensity = pl.baseInt + Math.sin(time * 15 + pl.phase) * 0.05;
+                }
+            });
+
+            // --- MONSTER LOGIC ---
+            // Spawn condition: If player moves far from start
+            const distFromStart = new THREE.Vector2(yawObject.position.x, yawObject.position.z).length();
+            if (!monsterActive && distFromStart > 30 && Math.random() < 0.01) {
+                // Spawn monster far away
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 40 + Math.random() * 20;
+                monster.position.set(
+                    yawObject.position.x + Math.cos(angle) * dist,
+                    0,
+                    yawObject.position.z + Math.sin(angle) * dist
+                );
+                monsterActive = true;
+            }
+
+            if (monsterActive) {
+                const pPos = yawObject.position;
+                const mPos = monster.position;
+                
+                const dir = new THREE.Vector3(pPos.x - mPos.x, 0, pPos.z - mPos.z);
+                const distance = dir.length();
+                
+                if (distance > 0.1) {
+                    dir.normalize();
+                    // Monster passes directly through walls, an unstoppable ghost entity
+                    const monsterSpeed = 3.5; // Slightly slower than walk speed
+                    monster.position.addScaledVector(dir, monsterSpeed * delta);
+                    
+                    // Glitchy rotation
+                    monster.rotation.y += (Math.random() - 0.5) * 0.5;
+                    monster.rotation.x = (Math.random() - 0.5) * 0.1;
+                }
+
+                // Audio & UI
+                updateMonsterAudio(distance);
+                const warnUI = document.getElementById('monster-warning');
+                if (distance < 25) {
+                    warnUI.style.opacity = 1 - (distance / 25);
+                } else {
+                    warnUI.style.opacity = 0;
+                }
+
+                // Kill condition
+                if (distance < 1.5) {
+                    gameState = 'GAMEOVER';
+                    document.exitPointerLock();
+                    stopAudio();
+                    showMenu('gameover');
+                }
+            }
+
+            // --- EXIT LOGIC ---
+            if (yawObject.position.distanceTo(exitMesh.position) < 3.0) {
+                gameState = 'WIN';
+                document.exitPointerLock();
+                stopAudio();
+                showMenu('win');
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Initialize Settings
+        updateLanguage();
+        animate();
+
+    </script>
+</body>
+</html>
