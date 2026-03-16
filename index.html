@@ -21,6 +21,32 @@
             height: 100%;
         }
 
+        /* VHS / CRT Scanline Effect */
+        #vhs-filter {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.15),
+                rgba(0, 0, 0, 0.15) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            pointer-events: none;
+            z-index: 15;
+            opacity: 0.8;
+            animation: flicker 0.15s infinite;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.8; }
+            50% { opacity: 0.7; }
+            100% { opacity: 0.85; }
+        }
+
         #ui-layer {
             position: absolute;
             top: 0;
@@ -33,7 +59,7 @@
             justify-content: space-between;
             padding: 20px;
             box-sizing: border-box;
-            z-index: 10;
+            z-index: 16; /* Di atas VHS filter */
         }
 
         #crosshair {
@@ -44,6 +70,7 @@
             color: rgba(255, 255, 255, 0.5);
             font-size: 24px;
             font-weight: bold;
+            text-shadow: 0 0 5px rgba(255,255,255,0.5);
         }
 
         #stamina-container {
@@ -121,6 +148,7 @@
         .btn:hover {
             background-color: #d8c37c;
             color: #000;
+            box-shadow: 0 0 15px #d8c37c;
         }
 
         #vignette {
@@ -129,7 +157,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: radial-gradient(circle, rgba(0,0,0,0) 40%, rgba(0,0,0,0.8) 100%);
+            background: radial-gradient(circle, rgba(0,0,0,0) 40%, rgba(0,0,0,0.9) 100%);
             pointer-events: none;
             z-index: 5;
         }
@@ -146,6 +174,7 @@
 <body>
     <div id="game-container"></div>
     <div id="vignette"></div>
+    <div id="vhs-filter"></div>
     <div id="ui-layer">
         <div id="level-info">Level: 1</div>
         <div id="crosshair">+</div>
@@ -166,7 +195,7 @@
         const config = {
             tileSize: 4,
             wallHeight: 5,
-            mapSize: 30, // Akan bertambah seiring level
+            mapSize: 30, 
             playerSpeed: 0.15,
             playerSprintSpeed: 0.28,
             staminaMax: 100,
@@ -182,7 +211,8 @@
             exhausted: false,
             mapData: [],
             exitPos: { x: 0, z: 0 },
-            monsterActive: false
+            monsterActive: false,
+            walkTimer: 0 // Untuk langkah kaki
         };
 
         let keys = { w: false, a: false, s: false, d: false, shift: false };
@@ -192,6 +222,7 @@
         let mapGroup, floorMesh, ceilingMesh;
         let monster;
         let wallMaterial, floorMaterial, ceilingMaterial, exitMaterial;
+        let ambientLight, pointLight; // Global agar bisa dikedipkan
 
         // Camera / Player rotation
         let pitch = 0;
@@ -199,7 +230,7 @@
 
         // --- AUDIO VARIABLES ---
         let audioCtx, masterGain;
-        let monsterPanner, monsterGain, monsterOsc1, monsterOsc2, monsterLFO;
+        let monsterPanner, monsterGain, monsterOsc1, monsterLFO;
         let ambientOsc, ambientFilter, ambientGain;
 
         // --- DOM ELEMENTS ---
@@ -220,7 +251,6 @@
                 startGame();
             });
             
-            // Render loop
             clock = new THREE.Clock();
             animate();
         };
@@ -228,21 +258,21 @@
         function initThreeJS() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x1a1a14);
-            scene.fog = new THREE.FogExp2(0x2a2a20, 0.04);
+            scene.fog = new THREE.FogExp2(0x2a2a20, 0.05); // Fog sedikit lebih tebal
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
             
             renderer = new THREE.WebGLRenderer({ antialias: false });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio > 1 ? 1 : 1); // Retro feel
+            renderer.setPixelRatio(window.devicePixelRatio > 1 ? 1 : 1);
             document.getElementById('game-container').appendChild(renderer.domElement);
 
             // Lighting
-            const ambientLight = new THREE.AmbientLight(0xfff5b6, 0.4); // Yellowish ambient
+            ambientLight = new THREE.AmbientLight(0xfff5b6, 0.4); 
             scene.add(ambientLight);
 
             // Player flashlight/aura
-            const pointLight = new THREE.PointLight(0xfff5b6, 0.8, 15);
+            pointLight = new THREE.PointLight(0xfff5b6, 0.8, 15);
             camera.add(pointLight);
             scene.add(camera);
 
@@ -255,9 +285,8 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
-        // --- TEXTURE GENERATION (Procedural Canvas) ---
+        // --- TEXTURE GENERATION ---
         function generateTextures() {
-            // Wall Texture (Yellowish wallpaper with noise and vertical lines)
             const wallCanvas = document.createElement('canvas');
             wallCanvas.width = 256; wallCanvas.height = 256;
             const ctxW = wallCanvas.getContext('2d');
@@ -266,16 +295,20 @@
                 ctxW.fillStyle = Math.random() > 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)';
                 ctxW.fillRect(Math.random()*256, Math.random()*256, 2, 2);
             }
-            // Vertical wallpaper lines
             ctxW.fillStyle = 'rgba(0,0,0,0.08)';
             for(let i=0; i<256; i+=32) {
                 ctxW.fillRect(i, 0, 2, 256);
             }
+            // Tambah efek jamur/kotoran di dinding bawah
+            ctxW.fillStyle = 'rgba(50, 40, 20, 0.3)';
+            for(let i=0; i<256; i++) {
+                ctxW.fillRect(i, 200 + Math.random()*56, 1, 56);
+            }
+
             const wallTex = new THREE.CanvasTexture(wallCanvas);
             wallTex.wrapS = THREE.RepeatWrapping; wallTex.wrapT = THREE.RepeatWrapping;
             wallMaterial = new THREE.MeshLambertMaterial({ map: wallTex });
 
-            // Floor Texture (Dirty moist carpet)
             const floorCanvas = document.createElement('canvas');
             floorCanvas.width = 256; floorCanvas.height = 256;
             const ctxF = floorCanvas.getContext('2d');
@@ -289,14 +322,12 @@
             floorTex.repeat.set(config.mapSize, config.mapSize);
             floorMaterial = new THREE.MeshLambertMaterial({ map: floorTex });
 
-            // Ceiling Texture (Office ceiling tiles)
             const ceilCanvas = document.createElement('canvas');
             ceilCanvas.width = 128; ceilCanvas.height = 128;
             const ctxC = ceilCanvas.getContext('2d');
             ctxC.fillStyle = '#e0e0d8'; ctxC.fillRect(0, 0, 128, 128);
             ctxC.strokeStyle = '#aaaaaa'; ctxC.lineWidth = 2;
             ctxC.strokeRect(0, 0, 128, 128);
-            // Some dirty spots
             ctxC.fillStyle = 'rgba(100,100,80,0.2)';
             ctxC.beginPath(); ctxC.arc(Math.random()*128, Math.random()*128, 20, 0, Math.PI*2); ctxC.fill();
             const ceilTex = new THREE.CanvasTexture(ceilCanvas);
@@ -304,25 +335,22 @@
             ceilTex.repeat.set(config.mapSize, config.mapSize);
             ceilingMaterial = new THREE.MeshLambertMaterial({ map: ceilTex });
 
-            // Exit Material
             exitMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true, transparent: true, opacity: 0.8 });
         }
 
-        // --- MAP GENERATION (Procedural) ---
+        // --- MAP GENERATION ---
         function generateLevel() {
             if(mapGroup) scene.remove(mapGroup);
             mapGroup = new THREE.Group();
             
-            // Increase difficulty/size
             let size = Math.min(60, config.mapSize + (state.level - 1) * 5);
-            config.monsterSpeed = Math.min(0.2, 0.08 + (state.level * 0.01));
+            config.monsterSpeed = Math.min(0.22, 0.08 + (state.level * 0.015));
             
-            state.mapData = Array(size).fill().map(() => Array(size).fill(1)); // 1 = wall, 0 = empty
+            state.mapData = Array(size).fill().map(() => Array(size).fill(1));
 
             let rooms = [];
-            const numRooms = Math.floor(size * size / 50); // Density
+            const numRooms = Math.floor(size * size / 50);
 
-            // Carve rooms
             for (let i = 0; i < numRooms; i++) {
                 let rw = Math.floor(Math.random() * 5) + 3;
                 let rh = Math.floor(Math.random() * 5) + 3;
@@ -337,14 +365,11 @@
                 rooms.push({ x: Math.floor(rx + rw/2), z: Math.floor(rz + rh/2) });
             }
 
-            // Connect rooms with corridors
             for (let i = 1; i < rooms.length; i++) {
                 let r1 = rooms[i-1];
                 let r2 = rooms[i];
-                
                 let cx = r1.x;
                 let cz = r1.z;
-
                 while (cx !== r2.x || cz !== r2.z) {
                     if (Math.random() > 0.5) {
                         if (cx < r2.x) cx++; else if (cx > r2.x) cx--;
@@ -355,19 +380,15 @@
                 }
             }
 
-            // Add random pillars inside big rooms for that Backrooms feel
             for(let x=2; x<size-2; x++) {
                 for(let z=2; z<size-2; z++) {
                     if(state.mapData[x][z] === 0 && Math.random() < 0.05) {
-                        // Ensure we don't block completely (simple heuristic)
                         state.mapData[x][z] = 1;
                     }
                 }
             }
 
-            // Build 3D Map
             const boxGeo = new THREE.BoxGeometry(config.tileSize, config.wallHeight, config.tileSize);
-            
             for (let x = 0; x < size; x++) {
                 for (let z = 0; z < size; z++) {
                     if (state.mapData[x][z] === 1) {
@@ -378,9 +399,7 @@
                 }
             }
 
-            // Planes for Floor and Ceiling
             const planeGeo = new THREE.PlaneGeometry(size * config.tileSize, size * config.tileSize);
-            
             floorMesh = new THREE.Mesh(planeGeo, floorMaterial);
             floorMesh.rotation.x = -Math.PI / 2;
             floorMesh.position.set((size * config.tileSize)/2 - config.tileSize/2, 0, (size * config.tileSize)/2 - config.tileSize/2);
@@ -391,12 +410,10 @@
             ceilingMesh.position.set((size * config.tileSize)/2 - config.tileSize/2, config.wallHeight, (size * config.tileSize)/2 - config.tileSize/2);
             mapGroup.add(ceilingMesh);
 
-            // Set Player Start
             camera.position.set(rooms[0].x * config.tileSize, config.wallHeight * 0.6, rooms[0].z * config.tileSize);
             yaw = 0; pitch = 0;
             updateCameraRotation();
 
-            // Set Exit Location
             let exitRoom = rooms[rooms.length - 1];
             state.exitPos = { x: exitRoom.x, z: exitRoom.z };
             let exitMesh = new THREE.Mesh(
@@ -405,28 +422,21 @@
             );
             exitMesh.position.set(exitRoom.x * config.tileSize, config.wallHeight/2, exitRoom.z * config.tileSize);
             
-            // Add point light to exit
             const exitLight = new THREE.PointLight(0x00ff00, 1, 10);
             exitLight.position.set(0, 0, 0);
             exitMesh.add(exitLight);
-            
             mapGroup.add(exitMesh);
 
             scene.add(mapGroup);
-
-            // Spawn Monster (Far from player)
             spawnMonster(size, rooms);
         }
 
         function spawnMonster(size, rooms) {
             if(monster) scene.remove(monster);
-            
-            // Creepy abstract geometry
             const monsterGeo = new THREE.BoxGeometry(config.tileSize*0.6, config.wallHeight*0.8, config.tileSize*0.6);
             const mat = new THREE.MeshBasicMaterial({ color: 0x000000 });
             monster = new THREE.Mesh(monsterGeo, mat);
             
-            // Spawn in a random room that is not the start
             let spawnRoom = rooms[Math.floor(Math.random() * (rooms.length - 1)) + 1];
             monster.position.set(spawnRoom.x * config.tileSize, config.wallHeight/2, spawnRoom.z * config.tileSize);
             
@@ -434,19 +444,17 @@
             state.monsterActive = true;
         }
 
-        // --- AUDIO SYSTEM (Procedural Web Audio) ---
+        // --- AUDIO SYSTEM ---
         function initAudio() {
-            if(audioCtx) return; // Already initialized
-            
+            if(audioCtx) return; 
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             masterGain = audioCtx.createGain();
             masterGain.connect(audioCtx.destination);
             masterGain.gain.value = 0.5;
 
-            // 1. Ambient Fluorescent Hum
             ambientOsc = audioCtx.createOscillator();
             ambientOsc.type = 'sawtooth';
-            ambientOsc.frequency.value = 60; // 60Hz hum
+            ambientOsc.frequency.value = 60; 
             
             ambientFilter = audioCtx.createBiquadFilter();
             ambientFilter.type = 'lowpass';
@@ -460,7 +468,6 @@
             ambientGain.connect(masterGain);
             ambientOsc.start();
 
-            // 2. Monster Sound (Throbbing / Heartbeat / Distorted rumble)
             monsterPanner = audioCtx.createPanner();
             monsterPanner.panningModel = 'HRTF';
             monsterPanner.distanceModel = 'exponential';
@@ -469,17 +476,15 @@
             monsterPanner.rolloffFactor = 1.5;
 
             monsterGain = audioCtx.createGain();
-            monsterGain.gain.value = 0; // Starts silent until near
+            monsterGain.gain.value = 0; 
 
-            // Base rumble
             monsterOsc1 = audioCtx.createOscillator();
             monsterOsc1.type = 'square';
             monsterOsc1.frequency.value = 35;
 
-            // Beating LFO
             monsterLFO = audioCtx.createOscillator();
             monsterLFO.type = 'sine';
-            monsterLFO.frequency.value = 2; // 2 beats per second
+            monsterLFO.frequency.value = 2; 
             
             const lfoGain = audioCtx.createGain();
             lfoGain.gain.value = 10;
@@ -494,15 +499,35 @@
             monsterLFO.start();
         }
 
+        // Fungsi memainkan suara langkah kaki procedural
+        function playFootstep(isSprinting) {
+            if(!audioCtx || audioCtx.state !== 'running') return;
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(masterGain);
+            
+            // Suara ketukan (thud)
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(isSprinting ? 80 : 60, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.1);
+            
+            gain.gain.setValueAtTime(isSprinting ? 0.3 : 0.15, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+
         function updateAudio() {
             if(!audioCtx || !state.isPlaying) return;
 
-            // Update Listener position (Player)
             audioCtx.listener.positionX.value = camera.position.x;
             audioCtx.listener.positionY.value = camera.position.y;
             audioCtx.listener.positionZ.value = camera.position.z;
 
-            // Calculate forward vector for audio orientation
             const dir = new THREE.Vector3();
             camera.getWorldDirection(dir);
             audioCtx.listener.forwardX.value = dir.x;
@@ -512,17 +537,14 @@
             audioCtx.listener.upY.value = 1;
             audioCtx.listener.upZ.value = 0;
 
-            // Update Panner position (Monster)
             if(monster) {
                 monsterPanner.positionX.value = monster.position.x;
                 monsterPanner.positionY.value = monster.position.y;
                 monsterPanner.positionZ.value = monster.position.z;
 
-                // Adjust throbbing speed based on distance
                 let dist = camera.position.distanceTo(monster.position);
                 if(dist < 30) {
                     monsterGain.gain.setTargetAtTime(1.5, audioCtx.currentTime, 0.1);
-                    // Faster heartbeat when close
                     let beatFreq = 2 + (30 - dist) * 0.15;
                     monsterLFO.frequency.setTargetAtTime(beatFreq, audioCtx.currentTime, 0.1);
                 } else {
@@ -558,13 +580,10 @@
                 yaw -= movementX * 0.002;
                 pitch -= movementY * 0.002;
 
-                // Clamp pitch to look straight up/down maximum
                 pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, pitch));
-                
                 updateCameraRotation();
             });
 
-            // Pointer Lock Event
             document.addEventListener('pointerlockchange', () => {
                 if (document.pointerLockElement !== document.body) {
                     pauseGame();
@@ -579,11 +598,8 @@
         function checkCollision(x, z) {
             let gridX = Math.round(x / config.tileSize);
             let gridZ = Math.round(z / config.tileSize);
-
             let mapSize = state.mapData.length;
             if (gridX < 0 || gridX >= mapSize || gridZ < 0 || gridZ >= mapSize) return true;
-
-            // Simple Box collision with grid
             return state.mapData[gridX][gridZ] === 1;
         }
 
@@ -621,8 +637,7 @@
             titleEl.style.color = "#cc0000";
             descEl.innerText = "Entitas itu menemukanmu di kegelapan...";
             startBtn.innerText = "Coba Lagi";
-            
-            state.mapData = []; // Reset map
+            state.mapData = []; 
         }
 
         function winLevel() {
@@ -634,15 +649,13 @@
             titleEl.style.color = "#00ff00";
             descEl.innerText = "Anda menemukan jalan keluar. Namun lorong ini tidak berujung...";
             startBtn.innerText = "Masuk ke Level " + state.level;
-            
-            generateLevel(); // Pre-generate next level
+            generateLevel(); 
         }
 
         function updatePlayer() {
             let isMoving = keys.w || keys.a || keys.s || keys.d;
             let isSprinting = keys.shift && isMoving && !state.exhausted;
 
-            // Stamina Logic
             if (isSprinting) {
                 state.stamina -= config.staminaDrain;
                 if (state.stamina <= 0) {
@@ -660,19 +673,13 @@
                     }
                 }
             }
-            
-            // Update UI Bar
             staminaBar.style.width = (state.stamina / config.staminaMax * 100) + '%';
 
             let speed = isSprinting ? config.playerSprintSpeed : config.playerSpeed;
             
-            // Movement Vector based on look direction (Yaw only, keep grounded)
             let dir = new THREE.Vector3();
             let right = new THREE.Vector3();
-            
-            // Forward vector on XZ plane
             dir.set(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
-            // Right vector
             right.set(Math.sin(yaw + Math.PI/2), 0, Math.cos(yaw + Math.PI/2)).normalize();
 
             let moveX = 0;
@@ -683,43 +690,45 @@
             if (keys.a) { moveX -= right.x; moveZ -= right.z; }
             if (keys.d) { moveX += right.x; moveZ += right.z; }
 
-            // Normalize diagonal movement
             if (moveX !== 0 || moveZ !== 0) {
                 let length = Math.sqrt(moveX*moveX + moveZ*moveZ);
                 moveX = (moveX/length) * speed;
                 moveZ = (moveZ/length) * speed;
+                
+                // Logic untuk Footstep (Suara langkah kaki)
+                state.walkTimer += speed;
+                if (state.walkTimer > (isSprinting ? 2.0 : 3.5)) {
+                    playFootstep(isSprinting);
+                    state.walkTimer = 0;
+                }
+            } else {
+                state.walkTimer = 0; // Reset jika diam
             }
 
-            // Head bobbing effect
+            // Head bobbing lebih dramatis saat lari
             if (isMoving) {
                 const time = Date.now() * (isSprinting ? 0.015 : 0.01);
-                camera.position.y = config.wallHeight * 0.6 + Math.sin(time) * 0.15;
+                const bobbingMuliplier = isSprinting ? 0.3 : 0.15;
+                camera.position.y = config.wallHeight * 0.6 + Math.sin(time) * bobbingMuliplier;
             } else {
                 camera.position.y = config.wallHeight * 0.6;
             }
 
-            // Apply movement with collision sliding
             let nextX = camera.position.x + moveX;
             let nextZ = camera.position.z + moveZ;
-
-            // Player collision radius
             const r = 0.5; 
 
-            // Check X axis
             if (!checkCollision(nextX + (moveX>0?r:-r), camera.position.z) && 
                 !checkCollision(nextX, camera.position.z + r) && 
                 !checkCollision(nextX, camera.position.z - r)) {
                 camera.position.x = nextX;
             }
-            
-            // Check Z axis
             if (!checkCollision(camera.position.x, nextZ + (moveZ>0?r:-r)) &&
                 !checkCollision(camera.position.x + r, nextZ) &&
                 !checkCollision(camera.position.x - r, nextZ)) {
                 camera.position.z = nextZ;
             }
 
-            // Check Exit Win Condition
             let pGridX = Math.round(camera.position.x / config.tileSize);
             let pGridZ = Math.round(camera.position.z / config.tileSize);
             if (pGridX === state.exitPos.x && pGridZ === state.exitPos.z) {
@@ -730,25 +739,20 @@
         function updateMonster() {
             if (!state.monsterActive || !monster) return;
 
-            // Very simple AI: Move straight towards player
             let dir = new THREE.Vector3();
             dir.subVectors(camera.position, monster.position);
-            dir.y = 0; // Keep on ground
+            dir.y = 0; 
             
             let dist = dir.length();
-            
             if (dist < 1.5) {
                 gameOver();
                 return;
             }
 
             dir.normalize();
-
-            // Try to move
             let nextX = monster.position.x + dir.x * config.monsterSpeed;
             let nextZ = monster.position.z + dir.z * config.monsterSpeed;
 
-            // Monster collision (simple)
             if (!checkCollision(nextX, monster.position.z)) {
                 monster.position.x = nextX;
             }
@@ -756,14 +760,23 @@
                 monster.position.z = nextZ;
             }
 
-            // Make monster face player
             monster.lookAt(camera.position.x, monster.position.y, camera.position.z);
             
-            // Glitch effect on monster
             if(Math.random() < 0.1) {
                 monster.scale.set(1 + Math.random()*0.2, 1 + Math.random()*0.5, 1 + Math.random()*0.2);
             } else {
                 monster.scale.set(1,1,1);
+            }
+        }
+
+        function updateEnvironment() {
+            // Random light flickering effect
+            if (Math.random() < 0.03) {
+                ambientLight.intensity = 0.1 + Math.random() * 0.2;
+                pointLight.intensity = 0.2 + Math.random() * 0.5;
+            } else {
+                ambientLight.intensity = 0.4;
+                pointLight.intensity = 0.8;
             }
         }
 
@@ -775,6 +788,7 @@
                 updatePlayer();
                 updateMonster();
                 updateAudio();
+                updateEnvironment(); // Update kelap-kelip lampu
             }
 
             if(renderer && scene && camera) {
