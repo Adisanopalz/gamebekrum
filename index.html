@@ -173,6 +173,20 @@
             z-index: 5;
         }
 
+        /* Tension Overlay saat monster mendekat */
+        #tension-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(0,0,0,0) 30%, rgba(180,0,0,0.85) 100%);
+            pointer-events: none;
+            z-index: 6;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
         /* Jumpscare Screen */
         #jumpscare {
             position: absolute;
@@ -208,6 +222,7 @@
 <body>
     <div id="game-container"></div>
     <div id="vignette"></div>
+    <div id="tension-overlay"></div>
     <div id="vhs-filter"></div>
     <div id="jumpscare"></div>
     <div id="ui-layer">
@@ -251,7 +266,8 @@
             monsterActive: false,
             walkTimer: 0,
             flashlight: true,
-            items: [] // Menyimpan Almond Water
+            items: [], // Menyimpan Almond Water
+            heartbeatTimer: 0
         };
 
         let keys = { w: false, a: false, s: false, d: false, shift: false };
@@ -266,6 +282,7 @@
         // Camera / Player rotation
         let pitch = 0;
         let yaw = 0;
+        let roll = 0; // Untuk Camera Tilt
 
         // --- AUDIO VARIABLES ---
         let audioCtx, masterGain;
@@ -281,11 +298,11 @@
         const levelInfo = document.getElementById('level-info');
         const notification = document.getElementById('notification');
         const jumpscareDiv = document.getElementById('jumpscare');
+        const tensionOverlay = document.getElementById('tension-overlay');
 
         // --- INITIALIZATION ---
         window.onload = function() {
             initThreeJS();
-            generateTextures();
             setupInput();
             
             startBtn.addEventListener('click', () => {
@@ -325,10 +342,18 @@
         }
 
         // --- TEXTURE GENERATION ---
-        function generateTextures() {
-            // Fungsi pembantu untuk membuat base dinding
+        function generateTextures(level) {
+            // Hapus tekstur lama untuk mencegah kebocoran memori
+            if (wallMaterial) wallMaterial.map.dispose();
+            if (wallMaterialText) wallMaterialText.map.dispose();
+
+            // Tentukan warna dinding berdasarkan level (Semakin dalam, makin gelap/merah)
+            let r=216, g=195, b=124; // Base yellow
+            if(level >= 3 && level <= 4) { r=160; g=170; b=140; } // Kehijauan
+            else if(level >= 5) { r=160; g=100; b=100; } // Kemerahan
+
             function drawBaseWall(ctx) {
-                ctx.fillStyle = '#D8C37C'; ctx.fillRect(0, 0, 256, 256);
+                ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(0, 0, 256, 256);
                 for(let i=0; i<10000; i++) {
                     ctx.fillStyle = Math.random() > 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)';
                     ctx.fillRect(Math.random()*256, Math.random()*256, 2, 2);
@@ -357,10 +382,9 @@
             wallTextCanvas.width = 256; wallTextCanvas.height = 256;
             const ctxWT = wallTextCanvas.getContext('2d');
             drawBaseWall(ctxWT);
-            const words = ["RUN", "NO ESCAPE", "?", "IT HEARS YOU", "WRONG WAY"];
-            ctxWT.fillStyle = "rgba(100, 10, 10, 0.6)"; // Warna darah kering
+            const words = ["RUN", "NO ESCAPE", "?", "IT HEARS YOU", "DONT LOOK"];
+            ctxWT.fillStyle = "rgba(100, 10, 10, 0.6)"; 
             ctxWT.font = "bold 30px 'Courier New'";
-            // Gambar teks acak
             ctxWT.translate(128, 128);
             ctxWT.rotate((Math.random() - 0.5) * 0.4);
             ctxWT.fillText(words[Math.floor(Math.random() * words.length)], -80, 0);
@@ -369,42 +393,45 @@
             const wallTextTex = new THREE.CanvasTexture(wallTextCanvas);
             wallMaterialText = new THREE.MeshLambertMaterial({ map: wallTextTex });
 
-            // Lantai
-            const floorCanvas = document.createElement('canvas');
-            floorCanvas.width = 256; floorCanvas.height = 256;
-            const ctxF = floorCanvas.getContext('2d');
-            ctxF.fillStyle = '#6b5c3f'; ctxF.fillRect(0, 0, 256, 256);
-            for(let i=0; i<20000; i++) {
-                ctxF.fillStyle = Math.random() > 0.5 ? 'rgba(0,0,0,0.1)' : 'rgba(150,130,80,0.1)';
-                ctxF.fillRect(Math.random()*256, Math.random()*256, 3, 3);
+            // Jika lantai dan langit-langit belum dibuat, buat sekarang
+            if (!floorMaterial) {
+                const floorCanvas = document.createElement('canvas');
+                floorCanvas.width = 256; floorCanvas.height = 256;
+                const ctxF = floorCanvas.getContext('2d');
+                ctxF.fillStyle = '#6b5c3f'; ctxF.fillRect(0, 0, 256, 256);
+                for(let i=0; i<20000; i++) {
+                    ctxF.fillStyle = Math.random() > 0.5 ? 'rgba(0,0,0,0.1)' : 'rgba(150,130,80,0.1)';
+                    ctxF.fillRect(Math.random()*256, Math.random()*256, 3, 3);
+                }
+                const floorTex = new THREE.CanvasTexture(floorCanvas);
+                floorTex.wrapS = THREE.RepeatWrapping; floorTex.wrapT = THREE.RepeatWrapping;
+                floorTex.repeat.set(config.mapSize, config.mapSize);
+                floorMaterial = new THREE.MeshLambertMaterial({ map: floorTex });
+
+                const ceilCanvas = document.createElement('canvas');
+                ceilCanvas.width = 128; ceilCanvas.height = 128;
+                const ctxC = ceilCanvas.getContext('2d');
+                ctxC.fillStyle = '#e0e0d8'; ctxC.fillRect(0, 0, 128, 128);
+                ctxC.strokeStyle = '#aaaaaa'; ctxC.lineWidth = 2;
+                ctxC.strokeRect(0, 0, 128, 128);
+                ctxC.fillStyle = 'rgba(100,100,80,0.2)';
+                ctxC.beginPath(); ctxC.arc(Math.random()*128, Math.random()*128, 20, 0, Math.PI*2); ctxC.fill();
+                const ceilTex = new THREE.CanvasTexture(ceilCanvas);
+                ceilTex.wrapS = THREE.RepeatWrapping; ceilTex.wrapT = THREE.RepeatWrapping;
+                ceilTex.repeat.set(config.mapSize, config.mapSize);
+                ceilingMaterial = new THREE.MeshLambertMaterial({ map: ceilTex });
+
+                exitMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true, transparent: true, opacity: 0.8 });
             }
-            const floorTex = new THREE.CanvasTexture(floorCanvas);
-            floorTex.wrapS = THREE.RepeatWrapping; floorTex.wrapT = THREE.RepeatWrapping;
-            floorTex.repeat.set(config.mapSize, config.mapSize);
-            floorMaterial = new THREE.MeshLambertMaterial({ map: floorTex });
-
-            // Langit-langit
-            const ceilCanvas = document.createElement('canvas');
-            ceilCanvas.width = 128; ceilCanvas.height = 128;
-            const ctxC = ceilCanvas.getContext('2d');
-            ctxC.fillStyle = '#e0e0d8'; ctxC.fillRect(0, 0, 128, 128);
-            ctxC.strokeStyle = '#aaaaaa'; ctxC.lineWidth = 2;
-            ctxC.strokeRect(0, 0, 128, 128);
-            ctxC.fillStyle = 'rgba(100,100,80,0.2)';
-            ctxC.beginPath(); ctxC.arc(Math.random()*128, Math.random()*128, 20, 0, Math.PI*2); ctxC.fill();
-            const ceilTex = new THREE.CanvasTexture(ceilCanvas);
-            ceilTex.wrapS = THREE.RepeatWrapping; ceilTex.wrapT = THREE.RepeatWrapping;
-            ceilTex.repeat.set(config.mapSize, config.mapSize);
-            ceilingMaterial = new THREE.MeshLambertMaterial({ map: ceilTex });
-
-            exitMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true, transparent: true, opacity: 0.8 });
         }
 
         // --- MAP GENERATION ---
         function generateLevel() {
+            generateTextures(state.level); // Update tekstur dinding sesuai level
+
             if(mapGroup) scene.remove(mapGroup);
             mapGroup = new THREE.Group();
-            state.items = []; // Reset item list
+            state.items = []; 
             
             let size = Math.min(60, config.mapSize + (state.level - 1) * 5);
             config.monsterSpeed = Math.min(0.25, 0.08 + (state.level * 0.015));
@@ -414,7 +441,6 @@
             let rooms = [];
             const numRooms = Math.floor(size * size / 50);
 
-            // Carve Rooms
             for (let i = 0; i < numRooms; i++) {
                 let rw = Math.floor(Math.random() * 5) + 3;
                 let rh = Math.floor(Math.random() * 5) + 3;
@@ -429,7 +455,6 @@
                 rooms.push({ x: Math.floor(rx + rw/2), z: Math.floor(rz + rh/2) });
             }
 
-            // Connect Rooms
             for (let i = 1; i < rooms.length; i++) {
                 let r1 = rooms[i-1];
                 let r2 = rooms[i];
@@ -445,7 +470,6 @@
                 }
             }
 
-            // Random Pillars
             for(let x=2; x<size-2; x++) {
                 for(let z=2; z<size-2; z++) {
                     if(state.mapData[x][z] === 0 && Math.random() < 0.05) {
@@ -454,12 +478,10 @@
                 }
             }
 
-            // Build Meshes
             const boxGeo = new THREE.BoxGeometry(config.tileSize, config.wallHeight, config.tileSize);
             for (let x = 0; x < size; x++) {
                 for (let z = 0; z < size; z++) {
                     if (state.mapData[x][z] === 1) {
-                        // 10% chance untuk dinding dengan tulisan menakutkan
                         let mat = (Math.random() < 0.1) ? wallMaterialText : wallMaterial;
                         let wall = new THREE.Mesh(boxGeo, mat);
                         wall.position.set(x * config.tileSize, config.wallHeight / 2, z * config.tileSize);
@@ -468,7 +490,6 @@
                 }
             }
 
-            // Planes
             const planeGeo = new THREE.PlaneGeometry(size * config.tileSize, size * config.tileSize);
             floorMesh = new THREE.Mesh(planeGeo, floorMaterial);
             floorMesh.rotation.x = -Math.PI / 2;
@@ -480,19 +501,17 @@
             ceilingMesh.position.set((size * config.tileSize)/2 - config.tileSize/2, config.wallHeight, (size * config.tileSize)/2 - config.tileSize/2);
             mapGroup.add(ceilingMesh);
 
-            // Generate Almond Water (Item)
             const waterGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.8, 8);
             const waterMat = new THREE.MeshLambertMaterial({ color: 0x88ccff });
-            let numItems = 2 + Math.floor(state.level / 2); // Makin tinggi level, makin banyak item
+            let numItems = 2 + Math.floor(state.level / 2); 
             
             for(let i=0; i < numItems; i++) {
                 let placed = false;
                 while(!placed) {
                     let rx = Math.floor(Math.random() * size);
                     let rz = Math.floor(Math.random() * size);
-                    if(state.mapData[rx][rz] === 0) { // Jika tempat kosong
+                    if(state.mapData[rx][rz] === 0) {
                         let water = new THREE.Mesh(waterGeo, waterMat);
-                        // Posisi di lantai
                         water.position.set(rx * config.tileSize, 0.4, rz * config.tileSize);
                         mapGroup.add(water);
                         state.items.push(water);
@@ -501,12 +520,10 @@
                 }
             }
 
-            // Player Init
             camera.position.set(rooms[0].x * config.tileSize, config.wallHeight * 0.6, rooms[0].z * config.tileSize);
-            yaw = 0; pitch = 0;
+            yaw = 0; pitch = 0; roll = 0;
             updateCameraRotation();
 
-            // Exit Init
             let exitRoom = rooms[rooms.length - 1];
             state.exitPos = { x: exitRoom.x, z: exitRoom.z };
             let exitMesh = new THREE.Mesh(
@@ -526,12 +543,40 @@
 
         function spawnMonster(size, rooms) {
             if(monster) scene.remove(monster);
-            const monsterGeo = new THREE.BoxGeometry(config.tileSize*0.6, config.wallHeight*0.8, config.tileSize*0.6);
-            const mat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-            monster = new THREE.Mesh(monsterGeo, mat);
+            
+            monster = new THREE.Group();
+
+            // Badan monster
+            const bodyGeo = new THREE.CylinderGeometry(0.5, 0.2, config.wallHeight * 0.75, 8);
+            const bodyMat = new THREE.MeshBasicMaterial({ color: 0x030303 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = (config.wallHeight * 0.75) / 2;
+            body.userData.baseY = body.position.y;
+            monster.add(body);
+
+            // Kepala
+            const headGeo = new THREE.SphereGeometry(0.6, 8, 8);
+            const head = new THREE.Mesh(headGeo, bodyMat);
+            head.position.y = config.wallHeight * 0.75 + 0.3;
+            head.userData.baseY = head.position.y;
+            monster.add(head);
+
+            // Mata Menyala
+            const eyeGeo = new THREE.SphereGeometry(0.1, 4, 4);
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeL.position.set(-0.25, head.position.y, 0.55);
+            eyeL.userData.baseY = eyeL.position.y;
+            
+            const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeR.position.set(0.25, head.position.y, 0.55);
+            eyeR.userData.baseY = eyeR.position.y;
+            
+            monster.add(eyeL);
+            monster.add(eyeR);
             
             let spawnRoom = rooms[Math.floor(Math.random() * (rooms.length - 1)) + 1];
-            monster.position.set(spawnRoom.x * config.tileSize, config.wallHeight/2, spawnRoom.z * config.tileSize);
+            monster.position.set(spawnRoom.x * config.tileSize, 0, spawnRoom.z * config.tileSize);
             
             scene.add(monster);
             state.monsterActive = true;
@@ -610,6 +655,31 @@
             osc.stop(audioCtx.currentTime + 0.1);
         }
 
+        // Suara detak jantung saat lelah
+        function playExhaustedHeartbeat() {
+            if(!audioCtx || audioCtx.state !== 'running') return;
+            
+            // Detak pertama
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(masterGain);
+            osc.frequency.setValueAtTime(50, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.6, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 0.1);
+
+            // Detak kedua
+            let osc2 = audioCtx.createOscillator();
+            let gain2 = audioCtx.createGain();
+            osc2.connect(gain2); gain2.connect(masterGain);
+            osc2.frequency.setValueAtTime(60, audioCtx.currentTime + 0.15);
+            osc2.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.3);
+            gain2.gain.setValueAtTime(0.4, audioCtx.currentTime + 0.15);
+            gain2.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            osc2.start(audioCtx.currentTime + 0.15); osc2.stop(audioCtx.currentTime + 0.3);
+        }
+
         function playClickSound() {
             if(!audioCtx || audioCtx.state !== 'running') return;
             const osc = audioCtx.createOscillator();
@@ -646,11 +716,10 @@
             if(!audioCtx || audioCtx.state !== 'running') return;
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
-            osc.connect(gain); gain.connect(audioCtx.destination); // Bypass master gain untuk suara keras
+            osc.connect(gain); gain.connect(audioCtx.destination); 
             
             osc.type = 'sawtooth';
             osc.frequency.setValueAtTime(100, audioCtx.currentTime);
-            // Vibrato kencang
             const lfo = audioCtx.createOscillator();
             lfo.type = 'square';
             lfo.frequency.value = 50;
@@ -741,7 +810,7 @@
         }
 
         function updateCameraRotation() {
-            camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+            camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, roll, 'YXZ'));
         }
 
         function checkCollision(x, z) {
@@ -759,6 +828,7 @@
 
             overlay.style.display = 'none';
             jumpscareDiv.style.display = 'none';
+            tensionOverlay.style.opacity = 0;
             state.isDead = false;
             document.body.requestPointerLock();
             
@@ -796,16 +866,14 @@
             state.isDead = true;
             document.exitPointerLock();
             
-            // Jumpscare Effect
             jumpscareDiv.style.display = 'block';
             playJumpscareSound();
-            camera.fov = 100; // Distorsi fov seketika
+            camera.fov = 100; 
             camera.updateProjectionMatrix();
 
-            // Tampilkan Game Over setelah 0.6 detik
             setTimeout(() => {
                 jumpscareDiv.style.display = 'none';
-                camera.fov = 75; // Reset FOV
+                camera.fov = 75; 
                 camera.updateProjectionMatrix();
 
                 overlay.style.display = 'flex';
@@ -829,10 +897,11 @@
             generateLevel(); 
         }
 
-        function updatePlayer() {
+        function updatePlayer(delta) {
             let isMoving = keys.w || keys.a || keys.s || keys.d;
             let isSprinting = keys.shift && isMoving && !state.exhausted;
 
+            // Logika Stamina
             if (isSprinting) {
                 state.stamina -= config.staminaDrain;
                 if (state.stamina <= 0) {
@@ -852,6 +921,17 @@
             }
             staminaBar.style.width = (state.stamina / config.staminaMax * 100) + '%';
 
+            // Logika Jantung Berdebar (Stamina menipis)
+            if (state.stamina < config.staminaMax * 0.3) {
+                state.heartbeatTimer += delta;
+                if (state.heartbeatTimer > 0.8) { // Detak setiap 0.8 detik
+                    playExhaustedHeartbeat();
+                    state.heartbeatTimer = 0;
+                }
+            } else {
+                state.heartbeatTimer = 0;
+            }
+
             let speed = isSprinting ? config.playerSprintSpeed : config.playerSpeed;
             
             let dir = new THREE.Vector3();
@@ -866,6 +946,12 @@
             if (keys.s) { moveX += dir.x; moveZ += dir.z; }
             if (keys.a) { moveX -= right.x; moveZ -= right.z; }
             if (keys.d) { moveX += right.x; moveZ += right.z; }
+
+            // Camera Tilt saat berjalan menyamping
+            let targetRoll = 0;
+            if (keys.a) targetRoll = 0.04;
+            else if (keys.d) targetRoll = -0.04;
+            roll += (targetRoll - roll) * 10 * delta; // Smoothed transition
 
             if (moveX !== 0 || moveZ !== 0) {
                 let length = Math.sqrt(moveX*moveX + moveZ*moveZ);
@@ -904,7 +990,6 @@
                 camera.position.z = nextZ;
             }
 
-            // Cek Koleksi Item (Almond Water)
             for (let i = state.items.length - 1; i >= 0; i--) {
                 if (camera.position.distanceTo(state.items[i].position) < 1.5) {
                     mapGroup.remove(state.items[i]);
@@ -932,6 +1017,15 @@
             dir.y = 0; 
             
             let dist = dir.length();
+            
+            // Tension Overlay Logic (Layar memerah saat monster dekat)
+            if (dist < 20) {
+                let opacity = 1.0 - (dist / 20);
+                tensionOverlay.style.opacity = opacity * 0.85;
+            } else {
+                tensionOverlay.style.opacity = 0;
+            }
+
             if (dist < 1.5) {
                 triggerJumpscare();
                 return;
@@ -950,15 +1044,15 @@
 
             monster.lookAt(camera.position.x, monster.position.y, camera.position.z);
             
-            if(Math.random() < 0.1) {
-                monster.scale.set(1 + Math.random()*0.2, 1 + Math.random()*0.5, 1 + Math.random()*0.2);
-            } else {
-                monster.scale.set(1,1,1);
-            }
+            // Animasi Monster Melayang/Hovering
+            monster.children.forEach(child => {
+                if (child.userData.baseY !== undefined) {
+                    child.position.y = child.userData.baseY + Math.sin(Date.now() * 0.003) * 0.2;
+                }
+            });
         }
 
         function updateEnvironment() {
-            // Random light flickering effect (hanya jika senter menyala atau ambient light)
             if (Math.random() < 0.03) {
                 ambientLight.intensity = 0.1 + Math.random() * 0.2;
                 if(state.flashlight) pointLight.intensity = 0.2 + Math.random() * 0.5;
@@ -967,19 +1061,19 @@
                 if(state.flashlight) pointLight.intensity = 0.8;
             }
 
-            // Animasi putaran item Almond Water
             state.items.forEach(item => {
                 item.rotation.y += 0.02;
-                item.position.y = 0.4 + Math.sin(Date.now() * 0.005) * 0.05; // Mengambang sedikit
+                item.position.y = 0.4 + Math.sin(Date.now() * 0.005) * 0.05; 
             });
         }
 
         // --- MAIN LOOP ---
         function animate() {
             requestAnimationFrame(animate);
+            let delta = clock.getDelta();
 
             if (state.isPlaying && !state.isDead) {
-                updatePlayer();
+                updatePlayer(delta);
                 updateMonster();
                 updateAudio();
                 updateEnvironment(); 
